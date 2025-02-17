@@ -60,6 +60,10 @@ pub mod pallet {
     #[pallet::getter(fn user_counter)]
     pub type UserCounter<T: Config> = StorageValue<_, u32, ValueQuery>;
 
+    #[pallet::storage]
+    #[pallet::getter(fn borrowings)]
+    pub type Borrowings<T: Config> = StorageDoubleMap<_, Blake2_128Concat, u32, Blake2_128Concat, T::AccountId, ()>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -69,6 +73,8 @@ pub mod pallet {
         UserCreated { who: T::AccountId, id: u32 },
         UserUpdated { who: T::AccountId, id: u32 },
         UserDeleted { who: T::AccountId, id: u32 },
+        BookBorrowed { who: T::AccountId, book_id: u32 },
+        BookReturned { who: T::AccountId, book_id: u32 },
     }
 
     #[pallet::error]
@@ -80,6 +86,8 @@ pub mod pallet {
         UserNotFound,
         CpfAlreadyExists,
         InvalidCpf,
+        BookAlreadyBorrowed,
+        BookNotBorrowedByUser,
     }
 
     // Função auxiliar para validar o CPF
@@ -106,6 +114,46 @@ pub mod pallet {
             Err(Error::<T>::InvalidPublicationDate)
         }
     }
+
+    impl<T: Config> Pallet<T> {
+        pub fn convert_to_timestamp(date_str: Vec<u8>) -> Result<u64, Error<T>> {
+            let date_str = core::str::from_utf8(&date_str).map_err(|_| Error::<T>::InvalidPublicationDate)?;
+            let parts: Vec<&str> = date_str.split('/').collect();
+            if parts.len() != 3 {
+                return Err(Error::<T>::InvalidPublicationDate);
+            }
+            let day: u32 = parts[0].parse().map_err(|_| Error::<T>::InvalidPublicationDate)?;
+            let month: u32 = parts[1].parse().map_err(|_| Error::<T>::InvalidPublicationDate)?;
+            let year: i32 = parts[2].parse().map_err(|_| Error::<T>::InvalidPublicationDate)?;
+            if month < 1 || month > 12 || day < 1 || day > 31 {
+                return Err(Error::<T>::InvalidPublicationDate);
+            }
+            let timestamp = Self::srt_timestamp(year, month, day)?;
+            Ok(timestamp)
+        }
+    
+        fn srt_timestamp(year: i32, month: u32, day: u32) -> Result<u64, Error<T>> {
+            let mut days = 0;
+            for y in 1970..year {
+                days += if Self::is_bissexto(y) { 366 } else { 365 };
+            }
+            let days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            for m in 0..(month as usize - 1) {
+                days += days_in_month[m];
+                if m == 1 && Self::is_bissexto(year) {
+                    days += 1;
+                }
+            }
+            days += day - 1;
+            let timestamp = days as u64 * 86400;
+            Ok(timestamp)
+        }
+    
+        fn is_bissexto(year: i32) -> bool {
+            (year % 400 == 0) || (year % 4 == 0 && year % 100 != 0) 
+        }
+    }
+    
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
@@ -237,5 +285,53 @@ pub mod pallet {
             Self::deposit_event(Event::UserDeleted { who, id });
             Ok(())
         }
+        // Função para emprestar um livro
+        #[pallet::weight(10_000)]
+        #[pallet::call_index(6)]
+        pub fn borrow_book(
+            origin: OriginFor<T>,
+            book_id: u32,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            // Verifica se o livro existe no CRUD
+            ensure!(Books::<T>::contains_key(&who, book_id), Error::<T>::BookNotFound);
+
+            // Verifica se o livro já está emprestado
+            ensure!(!Borrowings::<T>::contains_key(&book_id, &who), Error::<T>::BookAlreadyBorrowed);
+
+            // Empresta o livro associando o id do livro ao usuário
+            Borrowings::<T>::insert(&book_id, &who, ());
+
+            // Emite evento de empréstimo
+            Self::deposit_event(Event::BookBorrowed { who, book_id });
+
+            Ok(())
+        }
+
+        
+        // Função para devolver um livro
+        #[pallet::weight(10_000)]
+        #[pallet::call_index(7)]
+        pub fn return_book(
+            origin: OriginFor<T>,
+            book_id: u32,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+
+            // Verifica se o livro está emprestado ao usuário
+            ensure!(Borrowings::<T>::contains_key(&book_id, &who), Error::<T>::BookNotBorrowedByUser);
+
+            // Remove o livro do empréstimo
+            Borrowings::<T>::remove(&book_id, &who);
+
+            // Emite evento de devolução
+            Self::deposit_event(Event::BookReturned { who, book_id });
+
+            Ok(())
+        }
+
+
+
     }
 }

@@ -1,5 +1,5 @@
-use crate as pallet_template;
-use frame_support::derive_impl;
+pub (crate) use crate as pallet_template;
+use frame_support::{derive_impl, parameter_types};
 use sp_runtime::BuildStorage;
 
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -18,9 +18,16 @@ impl frame_system::Config for Test {
 	type Block = Block;
 }
 
+// Definindo os parâmetros para os valores máximos de comprimento de cada campo
+parameter_types! {
+    pub const MaxTitleLength: u32 = 100;
+    pub const MaxAuthorLength: u32 = 11;
+}
+
 impl pallet_template::Config for Test {
 	type RuntimeEvent = RuntimeEvent;
-	type WeightInfo = ();
+	type MaxTitleLength = MaxTitleLength;
+    type MaxAuthorLength = MaxAuthorLength;
 }
 
 // Build genesis storage according to the mock runtime.
